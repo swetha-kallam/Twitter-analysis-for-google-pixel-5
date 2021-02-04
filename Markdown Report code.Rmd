@@ -1,0 +1,441 @@
+---
+title: "Google Pixel 5 tweets analysis"
+author: "Swetha Kallam, Tim Hollinger, Marie-Reine Obama"
+date: "Feb 4, 2021"
+output:
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this project, we will be analyzing the tweets about Google Pixel 5 mobile phone. It was released on October 29 2020 in the USA. We will first create a quick word cloud for the data of one month before the release date, just to see what is being talked about the most. Then we will collect data from the end of October till end of January for our analysis. We will perform a brief analysis on the tweets w.r.t time, location, top 10 tweeters, hashtags etc. We will be then be doing a detailed sentiment analysis and topic modeling. 
+
+```{r echo=FALSE, include=FALSE}
+# Setting working directory
+setwd("C:\\Users\\skallam\\Documents\\Social Media")
+
+# THe file containing access codes related to our application
+source("tokens.R")
+
+# Loading all the packages we need, they will be installed if not present already
+x <- c('rtweet', 'SnowballC','topicmodels', 'tm','textdata','rmarkdown','stringr', 'forcats', 'textstem', 'Matrix','tidytext','dplyr','tidyr', 'wordcloud','ggplot2')
+lapply(x, function(x) {if (!require(x, character.only=T)) {install.packages(x);require(x)}})
+
+# Initializing the twitter tokens
+twitter_token <- create_token(
+  app = appname,
+  consumer_key = consumer_key,
+  consumer_secret = consumer_secret,
+  access_token = access_token,
+  access_secret = access_secret,
+  set_renv=FALSE)
+
+# Data from 1st Oct 2020 to 29 Oct 2020 is extracted using search_fullarchive() function of rtweet package and stored as csv file. That data is now loaded.
+before_release <- read_twitter_csv("before_release.csv")
+
+# Selecting only the columns we are interested in
+before_release <- select(before_release, c("status_id", "created_at", "screen_name", "text", "location"))
+
+# Adding stopwords specific to our application 
+custom_stop_words <- tribble(
+  ~word, ~lexicon,
+  "#pixel5", "CUSTOM",
+  "#pixel", "CUSTOM",
+  "@madebygoogle", "CUSTOM",
+  "#madebygoogle", "CUSTOM",
+  "madebygoogle", "CUSTOM",
+  "google", "CUSTOM",
+  "pixel", "CUSTOM",
+  "pixel5", "CUSTOM",
+  "#google","CUSTOM",
+  "googlepixel5", "CUSTOM",
+  "#googlepixel5", "CUSTOM",
+  "#googlepixel", "CUSTOM",
+  "googlepixel", "CUSTOM",
+  "teampixel", "CUSTOM",
+  "#teampixel", "CUSTOM",
+  "@google", "CUSTOM",
+  "#google", "CUSTOM",
+  "t.co", "CUSTOM",
+  "pixel5_", "CUSTOM",
+  "googleuk", "CUSTOM"
+)
+```
+
+# Before Product Release
+
+Before proceeding with the pre-processing of the data, we will first add some custom stop words specific to our context.
+
+Note that for this quick review, we are not removing any mentions, hashtags etc apart from the obvious ones, because we are interested to know what is being talked about mostly.
+
+```{r echo=FALSE}
+custom_stop_words
+```
+
+```{r echo=FALSE, include=FALSE}
+# We are using the snowball lexicon for stopwords
+# we combine it with the custom stopwords we created earlier to get a final list
+stop_words_final <- stop_words %>% filter(lexicon=="snowball") %>% 
+  bind_rows(custom_stop_words)
+
+# Pre-processing including tokenization, converting to lower-case, punctuation marks removal, removing URLs, removing stopwords and then finally calculating the counts of each word
+before_release_clean <- before_release %>% unnest_tokens(output="word",
+                                                         input=text,
+                                                         token="words",
+                                                         drop=FALSE,
+                                                         to_lower=TRUE,
+                                                         strip_punct = TRUE) %>%
+  mutate(word= gsub("http[[:alnum:][:punct:]]*", "", word)) %>% #removing any URLs
+  anti_join(stop_words_final) %>%                                            
+  count(word, sort=TRUE)
+```
+
+Now we perform some pre-processing steps like
+
+1.    Tokenization
+
+2.    Converting to lowercase
+
+3.    Punctuations removal
+
+4.    Removal of URLs
+
+5.    Stopwords removal
+
+Now let us see which words are repeated most frequently:
+
+```{r echo=FALSE}
+# Creating a wordcloud
+wordcloud(before_release_clean$word, 
+          before_release_clean$n, 
+          min.freq=5, # only consider words that have appeared more than 5 times
+          max.words=30, # plot a maximum of 30 words
+          scale=c(4,1), 
+          colors="steelblue4")
+```
+
+### **Insights**
+We see that comparisons are made often with iphone12 , which was also released around the same time. And also the words like portrait, camera, video, shot etc suggest that the camera features were highly talked about and anticipated.
+
+# After product release
+
+We will extract data for 3 months : Nov 2020, Dec 2020 and Jan 2021 for our analysis, 500 tweets per each month. We extract them separately month-wise and then combine them, to ensure that we have an equal distribution.
+
+```{r echo=FALSE, include=FALSE}
+# The data extraction has already been done and loaded into a csv file; we just import the file now.
+pixel <- read_twitter_csv("pixel.csv")
+
+# Selecting only required columns
+pixel <- pixel %>% select("status_id", "created_at", "screen_name", "text", "location")
+```
+
+## Performing some quick analysis of tweets
+
+Out of the 1500 tweets we extracted, only few of them has location information. Among those, we are checking what are the top 10 locations from which tweets were posted.
+```{r echo=FALSE}
+# Plotting the top 10 locations from which tweets were posted
+pixel %>%
+  filter(!is.na(location)) %>%
+  filter(location!="<U+0001F1E6><U+0001F1EA><U+0001F1EE><U+0001F1F3>") %>% 
+  count(location, sort = TRUE) %>%
+  mutate(location = reorder(location, n)) %>%
+  top_n(10) %>%
+  ggplot(aes(x = location, y = n)) +
+  geom_col(fill="steelblue") +
+  coord_flip() +
+  labs(x = "Count",
+       y = "Location",
+       title = "Top 10 locations")
+```
+
+Now we will plot the number of tweets per week. Note that the rtweet package extracts tweets in a random manner and this is ofcourse not representative of the entire twitter data collection.
+
+```{r echo=FALSE}
+# Plotting number of tweets per week 
+ts_plot(pixel, "weeks") +
+  labs(x = "Week", y = "Count",
+       title = "Frequency of tweets")
+```
+
+Now we will see the twitter handle (screen name) of the top 10 tweeters.
+
+```{r echo=FALSE}
+# Top 10 tweeters
+pixel %>% 
+  count(screen_name, sort = TRUE) %>%
+  top_n(10)
+```
+
+Below are the top 10 hashtags used most.
+
+```{r echo=FALSE}
+# Top 10 hashtags
+pixel %>% 
+  unnest_tokens(hashtag, text, "tweets", to_lower = TRUE) %>%
+  filter(str_detect(hashtag, "^#")) %>%
+  count(hashtag, sort = TRUE) %>%
+  top_n(10)
+```
+
+Below are the top 10 mentions used most.
+
+```{r echo=FALSE}
+# Top 10 mentions
+pixel %>% 
+  unnest_tokens(mentions, text, "tweets", to_lower = TRUE) %>%
+  filter(str_detect(mentions, "^@")) %>%  
+  count(mentions, sort = TRUE) %>%
+  top_n(10)
+```
+
+## Pre-processing:
+
+Before the pre-processing, we make sure that words like "shouldn't" are replaced by "should not" , which will be useful later when we perform sentiment analysis.
+
+Also we remove any hashtags , mentions, URLs, numbers because we cannot attach meaning to those.
+
+We also remove words that are less than 2 characters in length.
+
+```{r echo=FALSE, include=FALSE}
+# Replacing words ending with "n't" with " not" 
+pixel$text <- gsub("n't"," not", pixel$text)
+
+#Removing words starting with @ (mentions)
+pixel$text <- gsub("@\\S*", "", pixel$text)
+
+# Removing words starting with # (hashtags)
+pixel$text <- gsub("#\\S*", "", pixel$text)
+
+#Removing numbers
+pixel$text <- removeNumbers(pixel$text)
+
+# Removing URLs
+pixel$text <- gsub("http[[:alnum:][:punct:]]*", "",pixel$text)
+
+# Pre-processing with same steps as before
+pixel_clean <- pixel %>% unnest_tokens(output="word", input=text, token="words", 
+                                       drop=FALSE, to_lower=TRUE, strip_punct = TRUE) %>%
+  anti_join(stop_words_final) %>%
+  filter(nchar(word)>2)
+
+# Lemmatization using textstem package
+pixel_lemmatized <- pixel_clean %>% mutate(lemma=lemmatize_words(word))
+```
+
+Along with the pre-processing steps we have done earlier, we also add another additional step for lemmatization, to convert all words to their root words.
+```{r echo=FALSE}
+pixel_lemmatized %>% select(created_at,text, word, lemma) %>% head(3)
+```
+
+```{r echo=FALSE, include=FALSE}
+# Counting the frequency of each word
+pixel_wordcount <- pixel_lemmatized %>% count(lemma, sort=TRUE)
+```
+
+Now let us create a word cloud again to see the most frequent words being used:
+```{r echo=FALSE}
+# Creating a wordcloud
+wordcloud(pixel_wordcount$lemma, 
+          pixel_wordcount$n, 
+          min.freq=5, # only consider words that have appeared more than 5 times
+          max.words=30, # plot a maximum of 30 words
+          scale=c(4,1), 
+          colors="steelblue4")
+```
+
+## Topic Modeling
+Now we will try to see if we can broadly divide the tweets into different topics. We use the LDA (Latent Dirichlet Allocation) method for this. We create a loop and calculate the perplexity by varying the number of topics from 2 to 15. The lower the perplexity, the better the model, but we also need to keep interpretability in mind.
+```{r echo=FALSE, include=FALSE}
+# Creating Document term matrix
+pixel_dtm <- pixel_lemmatized %>% count(status_id,lemma) %>%
+  cast_dtm(document = status_id, term= lemma, value= n , weighting = tm::weightTf)
+
+# Removing very sparse words, (tried and tested with different values)
+pixel_dtm <- removeSparseTerms(pixel_dtm,0.97)
+# For LDA, we need each tweet to have a loading in atleast one of the terms left. So we are calculating the rowSums for each document(tweet) and removing any tweets with no loading at all
+pixel_rowsums<- apply(pixel_dtm,1,sum)
+pixel_dtm <- pixel_dtm[pixel_rowsums>0,]
+
+# Allocating 90% of the data as training set and 10% as test set
+sample_size <- floor(0.90 * nrow(pixel_dtm))
+set.seed(1111)
+train_ind <- sample(nrow(pixel_dtm), size = sample_size)
+train <- pixel_dtm[train_ind, ]
+test <- pixel_dtm[-train_ind, ]
+
+# Looping over with different values of k (number of topics) by training the model on training set and then calculating the perplexity for test set
+values=c()
+for(i in c(2:15)){
+  lda_model <- LDA(train, k = i, method = "Gibbs",
+                   control = list(iter = 25, seed = 1111))
+  values <- c(values, perplexity(lda_model, newdata = test))
+}
+```
+
+From the below plot we can see that the decrease in perplexity from 4 to 5 is much lesser compared to reduction from 3 to 4. Hence we stop at 4 and select number of topics as 4 for further analysis.
+
+```{r echo=FALSE}
+# Plotting the perplexity for different k values
+plot(c(2:15), values, main="Perplexity for Topics",
+     xlab="Number of Topics", ylab="Perplexity")
+```
+
+```{r echo=FALSE, include=FALSE}
+# Now we have selected k=4, hence we are implementing the LDA to our entire dataset
+pixel_lda <- LDA(pixel_dtm, k=4, method = "Gibbs", control=list(seed=1111))
+
+pixel_lda_beta <- tidy(pixel_lda, matrix="beta")
+pixel_lda_gamma <- tidy(pixel_lda, matrix="gamma")
+
+# We are seeing the top 10 words from each topic based on the beta value
+pixel_topics <- pixel_lda_beta %>% group_by(topic) %>% top_n(10, beta) %>% arrange(topic, -beta)
+```
+
+In the below plot we can see the top 10 words from each topic :
+```{r echo=FALSE}
+ggplot(pixel_topics, aes(x = term, y = beta, fill = topic)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  coord_flip() +
+  ggtitle("Topics analysis")
+```
+
+### **Insights**
+Although we cannot make any concrete conclusions from this, we can definitely observe that :  
+
+One of the topics is more about the anticipation about the receipt of the product , which is indicated by words like week, wait, expect etc. And it also includes words related to customer complaints like support, refund, small etc.
+
+One of the topics seems to be making comparisons with iphone and its features indicated by words like iphone, amp, shoot, love, like etc.
+
+One topic seems to be talking about camera features among other things.
+
+But the words in few topics are too general to allow for any conclusions.
+
+## Sentiment Analysis
+Now let us perform sentiment analysis. The pre-processing for this is almost same, except that we don't want to remove a few words from our list of stopwords.
+
+Negation words "not, no, nor" change the sentiment of the words following them to the opposite value.
+
+Words like "very, too" alter the value by increasing the effect. Eg: "very angry" is more powerful than "angry".
+
+Hence we add an extra step to not remove these words from our analysis.
+
+```{r echo=FALSE, include=FALSE}
+# Pre-processing , same as previous except that we unselect a few stopwords we don't want to remove
+pixel_clean_sentiment <- pixel %>% unnest_tokens(output="word", input=text, token="words", 
+                                       drop=FALSE, to_lower=TRUE, strip_punct = TRUE) %>%
+  mutate(word= gsub("http[[:alnum:][:punct:]]*", "", word)) %>% #removing any URLs
+  anti_join(slice(stop_words_final, -(165:167),-(173:174)))
+
+#Lemmatization
+pixel_lemma_sentiment <- pixel_clean_sentiment %>% mutate(lemma=lemmatize_words(word))
+
+#Calculating the previous word for each word
+pixel_lemma_sentiment <- 
+pixel_lemma_sentiment %>% select(status_id, lemma) %>% group_by(status_id) %>%
+  mutate(prev_word = lag(lemma,1)) %>% ungroup()
+```
+
+### Afinn dictionary
+First we will use the "afinn" dictionary. This assigns a value of -5 to 5 indicating "extremely negative" to "extremely positive" sentiments. 
+We also implement our previously mentioned concept.
+
+If the previous word is a negation word, the value is multiplied by -1 to change its meaning to the opposite. 
+
+If the previous word is "very" or "too" , we increase the effect of the sentiment by adding 1 to it if positive and subtracting 1 if it is negative.
+
+
+We then calculate the overall sentiment of each tweet by adding the sentiment values of all the words in the tweet. 
+
+```{r echo=FALSE, include=FALSE}
+# Implementing the logic mentioned above and counting the number of tweets for each overall sentiment value
+pixel_afinn <-   
+pixel_lemma_sentiment %>% inner_join(get_sentiments("afinn"),by=c("lemma"="word")) %>% 
+  mutate(value = ifelse(prev_word %in% c("not", "no", "nor"), value*-1, value)) %>%
+  mutate(value = ifelse(prev_word %in% c("too","very"),
+                            ifelse(value==0,0, ifelse(value>0, value+1, value-1)),
+                                   value)) %>%
+  group_by(status_id) %>%
+  summarise(sentiment = sum(value)) %>%
+  ungroup() %>%
+  count(sentiment , sort=TRUE)
+```
+
+The below graphs shows the number of tweets for each value of overall sentiment.
+
+```{r echo=FALSE}
+ggplot(pixel_afinn, aes(x=sentiment,y=n)) + 
+  geom_col(color='black', fill='steelblue') +
+  scale_x_continuous(name="Sentiment scale", limits=c(-8,16), breaks = seq(-8,16,2)) +
+  labs(y="Number of tweets",
+       title="Sentiment Analysis Afinn")
+```
+
+We can also summarize the sentiments as positive, negative or neutral depending on whether the value is >0, <0 or =0 respectively.
+```{r echo=FALSE}
+# Creating sentiment groups and counting number of tweets in each group
+pixel_afinn %>% rename(count=n) %>% mutate(sentiment_group = ifelse(sentiment==0, "neutral", ifelse(sentiment>0, "positive", "negative"))) %>% 
+  group_by(sentiment_group) %>%
+  summarise(num_of_tweets = sum(count)) %>%
+  arrange(desc(num_of_tweets))
+```
+
+### **Insights**
+We see that the sentiment is mostly positive. Also the overall sentiment counts extend more on the positive side compared to the negative. 
+
+## nrc dictionary
+The "nrc" dictionary assigns labels for sentiment to each word. 
+```{r echo=FALSE, include=FALSE}
+# Calculating sentiments based on nrc dictionary
+pixel_nrc <-
+pixel_lemma_sentiment %>% inner_join(get_sentiments("nrc"),by=c("lemma"="word")) %>% 
+  count(sentiment,sort=TRUE) %>%
+  mutate(sentiment2 = fct_reorder(sentiment,n))
+```  
+The below graph shows the number of tweets for each sentiment.
+```{r echo=FALSE}
+ggplot(
+  pixel_nrc, aes(x = sentiment2, y = n)
+) +
+  geom_col(color='steelblue', fill='steelblue') +
+  coord_flip() +
+  labs(title = "Sentiment counts", x="Sentiment", y="Number of tweets")
+```
+
+### **Insights**
+Apart from "positive", "anticipation" is the highest emotion , which is of course true because mostly all the tweets are showing excitement about the new release and waiting to acquire it.
+
+## Bing dictionary
+Using the bing dictionary, let us explore what are the most used words for both positive and negative sentiment.
+```{r echo=FALSE, include=FALSE}
+pixel_bing <- pixel_lemma_sentiment %>% inner_join(get_sentiments("bing"),by=c("lemma"="word")) %>%
+  count(lemma, sentiment) %>%
+  group_by(sentiment) %>%
+  top_n(10, n) %>%
+  ungroup() %>%
+  mutate(
+    word2 = fct_reorder(lemma, n)
+  )
+```
+
+The below graphs shows the top 10 words that are most frequently used. However, it is important to note that the counts for negative words are much lesser compared to the positive words.
+
+```{r echo=FALSE}
+ggplot(pixel_bing, aes(x = word2, y = n)) +
+  geom_col(show.legend = FALSE, fill="steelblue") +
+  facet_wrap(~ sentiment, scales = "free") +
+  coord_flip() +
+  labs(
+    title = "Sentiment Word Counts",
+    x = "Words",
+    y = "Count"
+  )
+```
+
+# Conclusion:
+
+Overall, we have seen that the mobile is often being compared with iphone12. The most talked about feature of the mobile is the camera. We also observed that the overall sentiment is mostly positive.
